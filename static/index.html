@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Add highlight.js for code syntax highlighting -->
+    <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.7.0/build/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.7.0/build/highlight.min.js"></script>
+    <!-- Add marked for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        .chat-container {
+            height: calc(100vh - 330px);
+        }
+
+        .message {
+            max-width: 80%;
+            margin: 8px;
+            padding: 12px;
+            border-radius: 12px;
+        }
+
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: auto;
+        }
+
+        .assistant-message {
+            background-color: #f5f5f5;
+            margin-right: auto;
+        }
+
+        .tools-panel {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        /* Markdown Styles */
+        .markdown-content {
+            line-height: 1.6;
+        }
+
+        .markdown-content p {
+            margin-bottom: 1em;
+        }
+
+        .markdown-content pre {
+            background-color: #f8f9fa;
+            padding: 1em;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        .markdown-content code {
+            background-color: #f8f9fa;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        .markdown-content pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            margin-left: 1.5em;
+            margin-bottom: 1em;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3 {
+            margin: 1em 0 0.5em;
+            font-weight: bold;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 1em;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex items-center mb-6">
+                <h1 class="text-2xl font-bold">Memorable-Agent</h1>
+                <button id="showTools" class="ml-auto bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                    Available Tools
+                </button>
+            </div>
+
+            <!-- Tools Panel -->
+            <div id="toolsPanel" class="tools-panel hidden mb-4 p-4 bg-gray-50 rounded">
+                <h2 class="font-bold mb-2">Available Tools:</h2>
+                <div id="toolsList" class="space-y-2"></div>
+            </div>
+
+            <!-- Chat Messages -->
+            <div id="chatMessages" class="chat-container overflow-y-auto mb-4 p-4 border rounded">
+                <div class="assistant-message message">
+                    Hello! I'm your AI assistant. How can I help you today?
+                </div>
+            </div>
+
+            <!-- Input Form -->
+            <form id="chatForm" class="flex gap-4">
+                <input type="text" id="messageInput"
+                    class="flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="Type your message here...">
+                <button type="submit"
+                    class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 transition-colors">
+                    Send
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Configure marked options
+        marked.setOptions({
+            highlight: function (code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    try {
+                        return hljs.highlight(code, { language: lang }).value;
+                    } catch (__) { }
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true
+        });
+
+        // Initialize variables
+        let tools = [];
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const messageInput = document.getElementById('messageInput');
+        const toolsPanel = document.getElementById('toolsPanel');
+        const showTools = document.getElementById('showTools');
+        const toolsList = document.getElementById('toolsList');
+        let currentStreamDiv = null;
+        let currentStreamContent = '';
+        let chatHistory = [];
+
+        // Toggle tools panel
+        showTools.addEventListener('click', () => {
+            toolsPanel.classList.toggle('hidden');
+        });
+
+        // Fetch available tools
+        async function fetchTools() {
+            try {
+                const response = await fetch('/tools');
+                const data = await response.json();
+                tools = data.tools;
+                displayTools(tools);
+            } catch (error) {
+                console.error('Error fetching tools:', error);
+            }
+        }
+
+        // Display tools in the panel
+        function displayTools(tools) {
+            toolsList.innerHTML = tools.map(tool => `
+                <div class="tool-item p-2 border-b">
+                    <div class="font-medium">${tool.name}</div>
+                    <div class="text-sm text-gray-600">${tool.description}</div>
+                </div>
+            `).join('');
+        }
+
+        // Add message to chat with Markdown support
+        function addMessage(content, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'} markdown-content`;
+            messageDiv.innerHTML = marked.parse(content);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            // Add to history
+            chatHistory.push({
+                role: isUser ? 'user' : 'assistant',
+                content: content
+            });
+        }
+
+        // Handle chat form submission with streaming
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage(message, true);
+            messageInput.value = '';
+
+            // Create a new message div for streaming content
+            currentStreamDiv = document.createElement('div');
+            currentStreamDiv.className = 'message assistant-message markdown-content';
+            chatMessages.appendChild(currentStreamDiv);
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        history: chatHistory.slice(0, -1) // Exclude the message we just added
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                // Reset stream content
+                currentStreamContent = '';
+
+                // Use TextDecoder for decoding the stream
+                const decoder = new TextDecoder();
+                let buffer = ''; // Buffer for incomplete chunks
+
+                // Get the reader from the response body
+                const reader = response.body.getReader();
+
+                try {
+                    while (true) {
+                        const { value, done } = await reader.read();
+
+                        if (done) {
+                            // Process any remaining data in the buffer
+                            if (buffer.trim()) {
+                                try {
+                                    const event = JSON.parse(buffer);
+                                    await processEvent(event);
+                                } catch (e) {
+                                    console.error('Error parsing final buffer:', e);
+                                }
+                            }
+                            break;
+                        }
+
+                        const chunk = decoder.decode(value, { stream: true });
+                        buffer += chunk;
+
+                        // Process complete lines from buffer
+                        let newlineIndex;
+                        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+                            const line = buffer.slice(0, newlineIndex);
+                            buffer = buffer.slice(newlineIndex + 1);
+
+                            if (line.trim()) {
+                                try {
+                                    const event = JSON.parse(line);
+                                    await processEvent(event);
+                                } catch (e) {
+                                    console.error('Error parsing streaming message:', e);
+                                }
+                            }
+                        }
+                    }
+                } catch (streamError) {
+                    console.error('Stream processing error:', streamError);
+                    throw streamError;
+                } finally {
+                    // Ensure the reader is released
+                    reader.releaseLock();
+                }
+
+            } catch (error) {
+                console.error('Error sending message:', error);
+                if (currentStreamDiv && currentStreamDiv.parentNode) {
+                    currentStreamDiv.parentNode.removeChild(currentStreamDiv);
+                }
+                addMessage('抱歉，处理请求时出现错误。请稍后重试。', false);
+            }
+        });
+
+        // Helper function to process stream events
+        async function processEvent(event) {
+            if (event.type === 'stream') {
+                // Append new content to the current stream
+                currentStreamContent += event.content;
+                if (currentStreamDiv) {
+                    currentStreamDiv.innerHTML = marked.parse(currentStreamContent);
+                }
+            } else if (event.type === 'action') {
+                // Show tool usage in a new message
+                addMessage(`🔧 ${event.content}`, false);
+            } else if (event.type === 'observation') {
+                // Show tool result in a new message
+                addMessage(`📋 ${event.content}`, false);
+            } else if (event.type === 'end') {
+                // Update with final content and add to history
+                if (currentStreamDiv && currentStreamDiv.parentNode) {
+                    currentStreamDiv.innerHTML = marked.parse(event.content);
+                    chatHistory.push({
+                        role: 'assistant',
+                        content: event.content
+                    });
+                } else {
+                    addMessage(event.content, false);
+                }
+                currentStreamDiv = null;
+                currentStreamContent = '';
+            } else if (event.type === 'error') {
+                // Show error
+                addMessage(`❌ Error: ${event.content}`, false);
+                currentStreamDiv = null;
+                currentStreamContent = '';
+            }
+
+            // Scroll to bottom after each update
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Fetch tools when page loads
+        fetchTools();
+    </script>
+</body>
+
+</html>
